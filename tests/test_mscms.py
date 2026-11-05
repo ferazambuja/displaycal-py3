@@ -2,6 +2,7 @@
 import atexit
 import gc
 import os
+import sys
 import threading
 import weakref
 from queue import Empty
@@ -137,6 +138,7 @@ def test_shutdown_does_not_retain_manager_until_process_exit(monkeypatch):
                 retained._log_listener.stop()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows queues have no write lock")
 def test_shutdown_survives_worker_abandoning_log_write_lock(monkeypatch):
     """Stopping the log reader cannot depend on a dead writer's lock."""
     monkeypatch.setattr(mscms_module, "_wcs_worker_process", _die_holding_log_lock)
