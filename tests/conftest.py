@@ -43,6 +43,7 @@ if sys.platform == "win32":
     _defaultpaths.ICCPROFILES_DISPLAY = _defaultpaths.ICCPROFILES
     _defaultpaths.ICCPROFILES_DISPLAY_HOME = _defaultpaths.ICCPROFILES_HOME
 
+import atexit
 import faulthandler
 import glob
 import pathlib
@@ -50,17 +51,37 @@ import platform
 import shutil
 import subprocess
 import tarfile
+import threading
 import time
 import webbrowser
 import zipfile
+
+
+def _start_ci_thread_dumps(file, interval=90):
+    """Dump under the GIL instead of racing thread exit in a native watchdog."""
+    stopped = threading.Event()
+
+    def dump_threads():
+        while not stopped.wait(interval):
+            faulthandler.dump_traceback(file=file)
+
+    thread = threading.Thread(target=dump_threads, daemon=True)
+    thread.start()
+
+    def stop():
+        stopped.set()
+        thread.join()
+
+    return stop
+
 
 # Diagnostic-only: CI hangs (see issue #7's Qt-migration test-suite work) have
 # repeatedly turned out to be real, un-mocked blocking calls (subprocesses,
 # modal dialogs, QThread signal delivery) that are invisible from the outside
 # -- a cancelled GitHub Actions job's log shows only the last test that
 # *finished*, never what the process was actually doing when it stalled.
-# Periodically dumping every thread's real Python-level stack trace turns
-# that blind spot into a two-minute wait at most. Written to its own file
+# Periodically dump every thread's Python-level stack when the GIL is available.
+# Written to its own file
 # rather than stderr: pytest's default per-test fd-level capturing would
 # otherwise trap the dump in a buffer that's only flushed when the test
 # finishes -- exactly what never happens on a hang. The workflow's
@@ -68,12 +89,12 @@ import zipfile
 # job gets cancelled mid-test. Gated to CI only so local runs stay quiet.
 if os.environ.get("GITHUB_ACTIONS") == "true":
     faulthandler.enable()
-    # Only the POSIX workflows consume this file. On Windows, CPython 3.12's
-    # watchdog can fault inside _Py_DumpTracebackThreads as threads exit.
-    # Keep tracing actual crashes without introducing that diagnostic thread.
+    # Only POSIX workflows consume this file. The native watchdog can fault
+    # while threads exit (also reproduced on Linux under Rosetta). A Python
+    # thread calls dump_traceback with the GIL held, keeping thread states alive.
     if sys.platform != "win32":
         _faulthandler_dump_file = open("faulthandler_dump.log", "a", buffering=1)
-        faulthandler.dump_traceback_later(90, repeat=True, file=_faulthandler_dump_file)
+        atexit.register(_start_ci_thread_dumps(_faulthandler_dump_file))
 
 
 _pytest_exitstatus = None
@@ -91,8 +112,6 @@ if (
     and sys.platform == "darwin"
     and sys.version_info[:2] == (3, 13)
 ):
-    import atexit
-
     def _exit_before_native_shutdown_crash():
         """Sidestep a native, traceback-less segfault during CPython 3.13's
         own interpreter finalization, reproduced twice in a row on macOS CI

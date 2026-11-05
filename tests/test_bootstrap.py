@@ -6,13 +6,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 
-
-@pytest.mark.skipif(
-    sys.platform != "win32" or sys.version_info[:2] != (3, 12),
-    reason="CPython 3.12 Windows traceback watchdog regression",
-)
 def test_ci_bootstrap_survives_threads_exiting(tmp_path):
     """CI diagnostics must not crash a process while its threads finish."""
     code = textwrap.dedent(
@@ -24,23 +18,35 @@ def test_ci_bootstrap_survives_threads_exiting(tmp_path):
         import threading
         import time
 
-        # Accelerate the session watchdog without changing the bootstrap's
-        # decision to enable it. The old native traceback walk can fault.
-        original = faulthandler.dump_traceback_later
-        faulthandler.dump_traceback_later = (
-            lambda timeout, **kwargs: original(0.005, **kwargs)
-        )
+        def unsafe_watchdog(*args, **kwargs):
+            raise AssertionError("CI must not start the native traceback watchdog")
+
+        faulthandler.dump_traceback_later = unsafe_watchdog
         sys.path.insert(0, str(Path(sys.argv[1]).parent.parent))
-        runpy.run_path(sys.argv[1])
+        bootstrap = runpy.run_path(sys.argv[1])
         assert faulthandler.is_enabled()
-        for _ in range(64):
-            threads = [threading.Thread(target=lambda: time.sleep(0.0001))
-                       for _ in range(4)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join()
-        faulthandler.cancel_dump_traceback_later()
+        dumped = threading.Event()
+        original = faulthandler.dump_traceback
+
+        def dump(**kwargs):
+            original(**kwargs)
+            dumped.set()
+
+        faulthandler.dump_traceback = dump
+        with open("thread-churn.log", "w") as log:
+            stop = bootstrap["_start_ci_thread_dumps"](log, interval=0.005)
+            try:
+                for _ in range(64):
+                    threads = [threading.Thread(target=lambda: time.sleep(0.0001))
+                               for _ in range(4)]
+                    for thread in threads:
+                        thread.start()
+                    for thread in threads:
+                        thread.join()
+                assert dumped.wait(5)
+            finally:
+                stop()
+        assert "Thread" in Path("thread-churn.log").read_text()
         """
     )
     env = os.environ.copy()
