@@ -68,8 +68,12 @@ import zipfile
 # job gets cancelled mid-test. Gated to CI only so local runs stay quiet.
 if os.environ.get("GITHUB_ACTIONS") == "true":
     faulthandler.enable()
-    _faulthandler_dump_file = open("faulthandler_dump.log", "a", buffering=1)
-    faulthandler.dump_traceback_later(90, repeat=True, file=_faulthandler_dump_file)
+    # Only the POSIX workflows consume this file. On Windows, CPython 3.12's
+    # watchdog can fault inside _Py_DumpTracebackThreads as threads exit.
+    # Keep tracing actual crashes without introducing that diagnostic thread.
+    if sys.platform != "win32":
+        _faulthandler_dump_file = open("faulthandler_dump.log", "a", buffering=1)
+        faulthandler.dump_traceback_later(90, repeat=True, file=_faulthandler_dump_file)
 
 
 _pytest_exitstatus = None
