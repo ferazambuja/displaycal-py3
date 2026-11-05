@@ -1,6 +1,6 @@
 import os
 import sys
-from subprocess import Popen
+from unittest.mock import patch
 
 import pytest
 
@@ -12,7 +12,7 @@ from DisplayCAL.argyll import (
     get_argyll_version_string,
     verbose_print,
 )
-from DisplayCAL.dev.mocks import check_call, check_call_str
+from DisplayCAL.dev.mocks import check_call_str
 from tests.data.argyll_sp_data import SUBPROCESS_COM
 
 
@@ -62,7 +62,10 @@ def test_get_argyll_util(setup_argyll):
 def test_get_argyll_version_string_1(setup_argyll):
     """Test get_argyll_version_string() function."""
     config.initcfg()
-    with check_call(Popen, "communicate", SUBPROCESS_COM):
+    # Replacing communicate alone still launches a real utility whose pipes
+    # are never drained and whose process is never reaped.
+    with patch("DisplayCAL.argyll.sp.Popen") as popen:
+        popen.return_value.communicate.return_value = SUBPROCESS_COM
         result = get_argyll_version_string("ccxxmake")
     expected_result = "2.3.0"
     assert result == expected_result
