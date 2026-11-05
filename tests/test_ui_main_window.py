@@ -85,6 +85,7 @@ def _init_config():
     never run.
     """
     config.initcfg()
+    original_dry_run = getcfg("dry_run", False)
     setcfg("3dlut.create", 0)
     setcfg("3dlut.format", "cube")
     setcfg("profile.black_point_compensation", 0)
@@ -109,6 +110,7 @@ def _init_config():
     yield
     setcfg("argyll.version", orig_argyll_version)
     setcfg("whitepoint.colortemp.locus", orig_colortemp_locus)
+    setcfg("dry_run", original_dry_run)
 
 
 @pytest.fixture

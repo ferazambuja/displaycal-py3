@@ -43,7 +43,9 @@ def qapp():
 @pytest.fixture(autouse=True)
 def _init_config():
     config.initcfg()
+    original_dry_run = config.getcfg("dry_run", False)
     yield
+    config.setcfg("dry_run", original_dry_run)
 
 
 @pytest.fixture
@@ -172,20 +174,14 @@ class TestEnableSpyder2Producer:
         assert seen == [("/tmp/x.exe", True)]
 
     def test_dry_run_returns_none_without_download(self, qapp, worker, monkeypatch):
-        # setcfg() mutates the in-memory CFG singleton directly, which
-        # initcfg() (the autouse _init_config fixture) doesn't clear -- reset
-        # explicitly so this doesn't leak "dry_run" into later tests.
         config.setcfg("dry_run", 1)
-        try:
-            monkeypatch.setattr(s2, "safe_glob", lambda pattern: [])
-            monkeypatch.setattr(
-                Worker,
-                "download",
-                lambda self, *a, **k: pytest.fail("should not download on dry_run"),
-            )
-            assert s2._enable_spyder2_producer(worker, None, False) is None
-        finally:
-            config.setcfg("dry_run", 0)
+        monkeypatch.setattr(s2, "safe_glob", lambda pattern: [])
+        monkeypatch.setattr(
+            Worker,
+            "download",
+            lambda self, *a, **k: pytest.fail("should not download on dry_run"),
+        )
+        assert s2._enable_spyder2_producer(worker, None, False) is None
 
     def test_local_install_found_and_succeeds_skips_download(
         self, qapp, worker, monkeypatch

@@ -22,7 +22,9 @@ from DisplayCAL.ui import measurement_flow as mf
 def _init_config():
     """Ensure config is initialised (default values) before each test."""
     config.initcfg()
+    original_dry_run = config.getcfg("dry_run", False)
     yield
+    config.setcfg("dry_run", original_dry_run)
 
 
 # --- decide_presentation ---------------------------------------------------
