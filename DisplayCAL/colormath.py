@@ -8,6 +8,7 @@ In most cases, unless otherwise stated RGB is R'G'B' (gamma-compressed)
 from __future__ import annotations
 
 import colorsys
+import copy
 import functools
 import logging
 import math
@@ -37,25 +38,32 @@ def cache(f: Callable) -> Callable[..., Any]:
         f (Callable): The function to wrap.
     """
 
+    def freeze(value: Any) -> Any:  # noqa: ANN401
+        if isinstance(value, (list, tuple)):
+            return type(value), tuple(freeze(item) for item in value)
+        return value
+
+    cached_values = {}
+
+    @functools.wraps(f)
     def wrapper(*args, **kwargs) -> Any:  # noqa: ANN401
         cache_hash = (
-            ((tuple(arg) if isinstance(arg, (list, tuple)) else arg for arg in args)),
-            (
-                (key, tuple(kwargs[key]))
-                if isinstance(kwargs[key], (list, tuple))
-                else kwargs[key]
-                for key in kwargs
-            ),
+            tuple(freeze(arg) for arg in args),
+            tuple((key, freeze(value)) for key, value in kwargs.items()),
         )
-        if not hasattr(f, "cache"):
-            f.cache = {}
-        if cache_hash in f.cache:
-            return f.cache[cache_hash]
-
+        try:
+            if cache_hash in cached_values:
+                return copy.deepcopy(cached_values[cache_hash])
+        except TypeError:
+            # Preserve calls with other unhashable arguments without caching.
+            return f(*args, **kwargs)
         result = f(*args, **kwargs)
-        f.cache[cache_hash] = result
+        # Matrices and RGB-space tuples can contain mutable lists. Neither
+        # later input changes nor mutations by a caller may poison the cache.
+        cached_values[cache_hash] = copy.deepcopy(result)
         return result
 
+    wrapper.cache = cached_values
     return wrapper
 
 

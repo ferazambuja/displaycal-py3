@@ -3,20 +3,74 @@ import math
 import pytest
 
 from DisplayCAL.colormath import (
+    CIEDCCT2XYZ,
     LSTAR_K,
     REC709_P,
     RGB2XYZ,
     SMPTE240M_P,
     SRGB_P,
     Matrix3x3,
+    cache,
     get_cat_matrix,
     get_standard_illuminant,
     linmin,
+    rgb_spaces,
     smooth_avg,
     smooth_avg_old,
     special_pow,
 )
 from tests.data.display_data import DisplayData
+
+
+@pytest.mark.parametrize("value", ["Bradford", [1, 2], [[1, 2], [3, 4]]])
+def test_cache_reuses_equal_arguments(value):
+    """Repeated sequence arguments must reuse a value rather than grow the cache."""
+    calls = []
+
+    @cache
+    def compute(argument):
+        calls.append(argument)
+        return len(calls)
+
+    assert compute(value) == 1
+    assert compute(value) == 1
+    assert len(calls) == 1
+
+
+def test_cache_keeps_keyword_names_and_changed_sequence_values():
+    """Argument names and nested sequence contents are part of the cache key."""
+    calls = []
+
+    @cache
+    def compute(**kwargs):
+        calls.append(True)
+        return sum(sum(row) for value in kwargs.values() for row in value)
+
+    value = [[1, 2]]
+    assert compute(first=value) == 3
+    assert compute(first=[[1, 2]]) == 3
+    assert len(calls) == 1
+    assert compute(second=value) == 3
+    assert len(calls) == 2
+    value[0][0] = 4
+    assert compute(first=value) == 6
+    assert len(calls) == 3
+
+
+def test_cache_isolates_mutable_inputs_and_results():
+    """Callers can change their matrices without changing another cached answer."""
+
+    @cache
+    def compute(value):
+        return value
+
+    value = [[1, 2]]
+    assert compute(value) is value
+    value[0][0] = 4
+    result = compute([[1, 2]])
+    assert result == [[1, 2]]
+    result[0][0] = 7
+    assert compute([[1, 2]]) == [[1, 2]]
 
 
 def test_smooth_avg_1():
