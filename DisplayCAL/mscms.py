@@ -295,6 +295,32 @@ def _wcs_worker_process(
             logger.removeHandler(handler)
 
 
+class _WCSLogListener(QueueListener):
+    """Stop reading without acquiring a log lock abandoned by a dead worker."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._stop_event = threading.Event()
+
+    def dequeue(self, block: bool) -> Any:  # noqa: ANN401
+        """Drain records while polling for a local shutdown request."""
+        while True:
+            try:
+                return self.queue.get(block=block, timeout=0.1 if block else None)
+            except Empty:
+                if not block:
+                    raise
+                if self._stop_event.is_set():
+                    return self._sentinel
+
+    def stop(self) -> None:
+        """Drain and join without writing through the worker's queue lock."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+
+
 class WCSManager:
     """WCSManager class.
 
@@ -331,7 +357,7 @@ class WCSManager:
         self._response_listener_thread: None | Thread = None
 
         handlers = logger.handlers if logger.handlers else [logging.StreamHandler()]
-        self._log_listener = QueueListener(
+        self._log_listener = _WCSLogListener(
             self._log_queue, *handlers, respect_handler_level=True
         )
         self._log_listener.start()
@@ -541,7 +567,12 @@ class WCSManager:
         return req_data.get("result")
 
     def shutdown(self) -> None:
-        """Shutdowns the worker process and listener thread."""
+        """Stop the manager and release its automatic cleanup registration."""
+        self._shutdown()
+        atexit.unregister(self._atexit_shutdown)
+
+    def _shutdown(self) -> None:
+        """Release resources for both explicit shutdown and process exit."""
         if self._shutdown_event.is_set():
             logger.debug("WCSManager is already set to shut down")
             return
@@ -557,15 +588,14 @@ class WCSManager:
             self._log_listener.stop()
         self._log_queue.close()
         self._log_queue.join_thread()
-        # Explicit shutdown must release this manager before interpreter exit.
-        atexit.unregister(self._atexit_shutdown)
         logger.info("WCSManager shut down complete")
 
     def _atexit_shutdown(self) -> None:
         """Shutdown handler for atexit to ensure cleanup on normal interpreter exit."""
         if not self._shutdown_event.is_set():
             logger.info("WCSManager: atexit triggered shutdown")
-            self.shutdown()
+            # Mutating atexit's registry from a cleanup callback is undefined.
+            self._shutdown()
 
     def associate_color_profile_with_device(
         self, scope: WCS_PROF_SCOPE, profile_name: str, device_key: str

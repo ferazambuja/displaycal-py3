@@ -1,6 +1,8 @@
 # Standard Library Imports
 import atexit
 import gc
+import os
+import threading
 import weakref
 from queue import Empty
 from unittest.mock import patch
@@ -72,6 +74,11 @@ def _oserror_wcs_worker_process(request_queue, response_queue, log_queue):
         response_queue.put(response)
 
 
+def _die_holding_log_lock(request_queue, response_queue, log_queue):
+    log_queue._wlock.acquire()
+    os._exit(1)
+
+
 @pytest.fixture
 def wcs_manager():
     original_worker = mscms_module._wcs_worker_process
@@ -92,14 +99,19 @@ def test_manager_initialization(wcs_manager):
     assert wcs_manager._worker_process.is_alive()
 
 
-def test_shutdown_releases_log_listener(wcs_manager):
+@pytest.mark.parametrize("automatic", [False, True])
+def test_shutdown_releases_log_listener(wcs_manager, automatic):
     """A stopped manager must not retain its logging thread and queue."""
     listener_thread = wcs_manager._log_listener._thread
     try:
-        wcs_manager.shutdown()
+        if automatic:
+            wcs_manager._atexit_shutdown()
+        else:
+            wcs_manager.shutdown()
         assert not listener_thread.is_alive()
         assert wcs_manager._log_queue._closed
-        assert not wcs_manager._log_queue._thread.is_alive()
+        feeder = wcs_manager._log_queue._thread
+        assert feeder is None or not feeder.is_alive()
     finally:
         # Leave no diagnostic thread behind when checking the unfixed code.
         if listener_thread.is_alive():
@@ -123,6 +135,34 @@ def test_shutdown_does_not_retain_manager_until_process_exit(monkeypatch):
             atexit.unregister(retained._atexit_shutdown)
             if retained._log_listener._thread is not None:
                 retained._log_listener.stop()
+
+
+def test_shutdown_survives_worker_abandoning_log_write_lock(monkeypatch):
+    """Stopping the log reader cannot depend on a dead writer's lock."""
+    monkeypatch.setattr(mscms_module, "_wcs_worker_process", _die_holding_log_lock)
+    manager = mscms_module.WCSManager()
+    manager._worker_process.join(5)
+    assert manager._worker_process.exitcode == 1
+    finished = threading.Event()
+    errors = []
+
+    def shutdown():
+        try:
+            manager.shutdown()
+        except Exception as error:
+            errors.append(error)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=shutdown, daemon=True)
+    thread.start()
+    try:
+        assert finished.wait(5)
+        assert errors == []
+    finally:
+        # Recover only the lock deliberately abandoned by this test's worker.
+        manager._log_queue._wlock.release()
+        thread.join(5)
 
 
 def test_successful_method_call(wcs_manager):

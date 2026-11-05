@@ -244,7 +244,7 @@ class TestConnectMadvr:
         release = threading.Event()
 
         def connect():
-            release.wait(5)
+            release.wait()
             return True
 
         monkeypatch.setattr(worker, "madtpg_connect", connect)
@@ -286,15 +286,23 @@ class TestConnectMadvr:
         assert result is True
         assert shown == [True]
 
+    @pytest.mark.parametrize("dialog_delay", [0.0, 5.2])
     def test_slow_cancel_returns_none(
-        self, qapp, worker, monkeypatch, pending_connection
+        self, qapp, worker, monkeypatch, pending_connection, dialog_delay
     ):
+        dialog_class = pgs.QProgressDialog
+
+        def create_dialog(*args, **kwargs):
+            time.sleep(dialog_delay)
+            return dialog_class(*args, **kwargs)
+
         def _fake_exec(self):
             self.canceled.emit()
             pending_connection.set()
             return 0
 
-        monkeypatch.setattr(pgs.QProgressDialog, "exec_", _fake_exec)
+        monkeypatch.setattr(dialog_class, "exec_", _fake_exec)
+        monkeypatch.setattr(pgs, "QProgressDialog", create_dialog)
 
         result = pgs.connect_madvr(worker, None, "title")
 
