@@ -8,6 +8,18 @@ import pytest
 from DisplayCAL import config
 
 
+def test_test_user_paths_are_isolated():
+    """Test bootstrap must keep preferences, data, and cache out of real profiles."""
+    from pathlib import Path
+
+    from DisplayCAL import defaultpaths
+
+    test_home = Path(os.environ["HOME"]).resolve()
+    paths = (config.CONFIG_HOME, config.DATA_HOME, config.LOGDIR, defaultpaths.CACHE)
+    for path in paths:
+        assert Path(path).resolve().is_relative_to(test_home), path
+
+
 def test_default_values_1():
     """Test default values of module level variables."""
     from DisplayCAL import config

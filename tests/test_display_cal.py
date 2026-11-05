@@ -46,9 +46,9 @@ from DisplayCAL.wx_windows import BaseInteractiveDialog, ConfirmDialog, InfoDial
 
 
 @pytest.fixture(scope="session", name="app", autouse=True)
-def fixture_app() -> AppConsole:
+def fixture_app(wx_app) -> AppConsole:
     """Return app for tests."""
-    return wx.GetApp() or wx.App()
+    return wx_app
 
 
 @pytest.fixture(scope="module", name="mainframe")

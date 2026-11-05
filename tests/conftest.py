@@ -19,12 +19,29 @@ os.environ["XDG_CACHE_HOME"] = os.path.join(_TEST_HOME, ".cache")
 os.environ["XDG_CONFIG_HOME"] = os.path.join(_TEST_HOME, ".config")
 os.environ["XDG_DATA_HOME"] = os.path.join(_TEST_HOME, ".local", "share")
 if sys.platform == "win32":
-    # Best-effort: the pywin32 SHGetSpecialFolderPath lookup DisplayCAL uses on
-    # Windows queries the OS directly and ignores these, but the ctypes
-    # fallback and any other HOME-based logic still benefit.
     os.environ["USERPROFILE"] = _TEST_HOME
-    os.environ.setdefault("APPDATA", os.path.join(_TEST_HOME, "AppData", "Roaming"))
-    os.environ.setdefault("LOCALAPPDATA", os.path.join(_TEST_HOME, "AppData", "Local"))
+    os.environ["APPDATA"] = os.path.join(_TEST_HOME, "AppData", "Roaming")
+    os.environ["LOCALAPPDATA"] = os.path.join(_TEST_HOME, "AppData", "Local")
+    os.environ["ALLUSERSPROFILE"] = os.path.join(_TEST_HOME, "ProgramData")
+    # Windows shell-folder APIs ignore these environment overrides. Redirect
+    # DisplayCAL's resolved paths before config or any other consumer imports
+    # them, including on each xdist worker. Leave the OS APIs themselves alone.
+    from DisplayCAL import defaultpaths as _defaultpaths
+
+    _defaultpaths.APPDATA = _defaultpaths.LIBRARY_HOME = os.environ["APPDATA"]
+    _defaultpaths.LOCALAPPDATA = _defaultpaths.CACHE = os.environ["LOCALAPPDATA"]
+    _defaultpaths.COMMONAPPDATA = [os.environ["ALLUSERSPROFILE"]]
+    _defaultpaths.LIBRARY = os.environ["ALLUSERSPROFILE"]
+    _defaultpaths.COMMON_PROGRAM_FILES = os.path.join(_TEST_HOME, "Common Files")
+    _defaultpaths.AUTOSTART = os.path.join(_TEST_HOME, "Common Startup")
+    _defaultpaths.AUTOSTART_HOME = os.path.join(_TEST_HOME, "Startup")
+    _defaultpaths.PROGRAMS = os.path.join(_TEST_HOME, "Programs")
+    _defaultpaths.COMMON_PROGRAMS = [os.path.join(_TEST_HOME, "Common Programs")]
+    _defaultpaths.ICCPROFILES = _defaultpaths.ICCPROFILES_HOME = [
+        os.path.join(_TEST_HOME, "color", "icc")
+    ]
+    _defaultpaths.ICCPROFILES_DISPLAY = _defaultpaths.ICCPROFILES
+    _defaultpaths.ICCPROFILES_DISPLAY_HOME = _defaultpaths.ICCPROFILES_HOME
 
 import faulthandler
 import glob
@@ -156,6 +173,18 @@ except ImportError:
 # intro_new.wav etc. for the whole test session without needing a per-file
 # monkeypatch.
 audio.Sound = audio.DummySound
+
+
+@pytest.fixture(scope="session")
+def wx_app():
+    """Retain one wx application while either toolkit can dispatch GTK events.
+
+    A function-local wx.App can be collected while Qt still shares its GLib
+    event context, leaving wx idle callbacks with destroyed application state.
+    """
+    from DisplayCAL.wx_addons import wx
+
+    return wx.GetApp() or wx.App()
 
 
 @pytest.fixture(scope="module")

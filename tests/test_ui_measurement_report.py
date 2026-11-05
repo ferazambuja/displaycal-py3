@@ -34,8 +34,8 @@ def qapp():
 
 
 @pytest.fixture(autouse=True)
-def _no_real_display_profile_probe(monkeypatch):
-    """Never let ReportPanel's construction shell out to a real display probe.
+def _no_real_profile_probes(monkeypatch):
+    """Keep report widgets independent of real display and Argyll probes.
 
     ``ReportPanel.__init__()`` -> ``mr_update_controls()`` -> ``set_profile()``
     calls ``config.get_current_profile(True)``, which falls through to
@@ -49,12 +49,18 @@ def _no_real_display_profile_probe(monkeypatch):
     Autouse because several tests in this file (e.g. TestEmbeddedPanel)
     construct ``ReportPanel`` directly rather than through the ``window``
     fixture below.
+    Restored profiles also look up their blackpoint through xicclu; keep
+    that subprocess and its error dialogs out of these widget tests too.
     """
     monkeypatch.setattr(config, "get_display_profile", lambda *a, **k: None)
+    from DisplayCAL.worker import Worker
+
+    monkeypatch.setattr(Worker, "set_argyll_version", lambda self, *a, **k: None)
+    monkeypatch.setattr(Worker, "xicclu", lambda self, *a, **k: [[0, 0, 0]])
 
 
 @pytest.fixture
-def window(qapp, monkeypatch):
+def window(qapp):
     """Create a fresh ReportWindow with config isolated per test.
 
     Constructing the window and exercising its handlers writes to the global
@@ -62,14 +68,6 @@ def window(qapp, monkeypatch):
     the rest of the suite (e.g. ``test_worker``).
     """
     from DisplayCAL.ui.measurement_report import ReportWindow
-    from DisplayCAL.worker import Worker
-
-    # ReportPanel.__init__() (built with no worker passed here) constructs
-    # its own Worker() and unconditionally calls set_argyll_version("xicclu"),
-    # which shells out to `xicclu -?` with a 30s timeout -- reliably eats
-    # the full 30s on CI instead of returning fast (no real Argyll/hardware
-    # to probe).
-    monkeypatch.setattr(Worker, "set_argyll_version", lambda self, *a, **k: None)
 
     saved = dict(config.CFG["Default"])
     win = ReportWindow()
@@ -288,9 +286,7 @@ class TestDevlinkProfileMissingHint:
         from DisplayCAL.icc_profile import ICCProfile
 
         # Set on the panel, ReportWindow only forwards attribute reads to it
-        window.panel.simulation_profile = ICCProfile(
-            config.get_data_path("ref/Rec709.icm")
-        )
+        window.panel.simulation_profile = ICCProfile.from_named_rgb_space("Rec. 709")
         config.setcfg("measurement_report.chart.fields", "RGB")
         config.setcfg("measurement_report.use_simulation_profile", 1)
         config.setcfg("measurement_report.use_simulation_profile_as_output", 1)

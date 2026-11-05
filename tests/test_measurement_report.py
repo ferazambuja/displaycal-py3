@@ -13,7 +13,7 @@ import pytest
 
 from DisplayCAL import measurement_report as mr
 from DisplayCAL.cgats import CGATS
-from DisplayCAL.config import get_data_path, setcfg
+from DisplayCAL.config import setcfg
 from DisplayCAL.icc_profile import DictType, ICCProfile
 
 #: Real dispread/colprof output fixture set (matching .ti1/.ti3/.icc/.cal),
@@ -288,7 +288,7 @@ def _devlink(tmp_path, collink_args):
     profile has been read back from disk, which is how verification always
     gets its device link.
     """
-    devlink = ICCProfile(get_data_path("ref/Rec709.icm"))
+    devlink = ICCProfile.from_named_rgb_space("Rec. 709")
     devlink.tags.meta = DictType()
     if collink_args is not None:
         devlink.tags.meta.update([("collink.args", collink_args)])
@@ -317,7 +317,7 @@ class TestCalibrationSelection:
 
     @pytest.fixture
     def sim(self):
-        profile = ICCProfile(get_data_path("ref/Rec709.icm"))
+        profile = ICCProfile.from_named_rgb_space("Rec. 709")
         assert "vcgt" not in profile.tags
         return profile
 

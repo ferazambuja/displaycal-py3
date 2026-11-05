@@ -27,7 +27,7 @@ os.environ.setdefault("QT_API", "pyside6")
 # Skip the whole module cleanly if Qt is unavailable in the environment.
 pytest.importorskip("qtpy")
 
-from qtpy.QtCore import QThread  # noqa: E402
+from qtpy.QtCore import QCoreApplication, QEvent, QThread  # noqa: E402
 
 from DisplayCAL.ui import file_dialog  # noqa: E402
 from DisplayCAL.ui import main_window as mw  # noqa: E402
@@ -100,10 +100,15 @@ def _init_config():
     # exactly like the other pinned keys above (confirmed via a real CI hang
     # in test_measurement_mode_ctrl_populates_and_persists).
     setcfg("calibration.black_point_correction", 0.0)
+    # Measurement fixtures supply daylight temperatures; another module can
+    # leave the shared configuration on the Planckian locus.
+    orig_colortemp_locus = getcfg("whitepoint.colortemp.locus")
+    setcfg("whitepoint.colortemp.locus", "t")
     orig_argyll_version = getcfg("argyll.version")
     setcfg("argyll.version", "0.0.0")
     yield
     setcfg("argyll.version", orig_argyll_version)
+    setcfg("whitepoint.colortemp.locus", orig_colortemp_locus)
 
 
 @pytest.fixture
@@ -164,6 +169,14 @@ def stub_worker(monkeypatch):
     # 30s timeout, which reliably eats the full 30s on CI instead of
     # returning fast (no real instrument/hardware to probe).
     monkeypatch.setattr(Worker, "set_argyll_version", lambda self, *a, **k: None)
+    # Restored report profiles also look up their blackpoint through xicclu.
+    # These widget tests must not launch Argyll or its modal error dialog.
+    monkeypatch.setattr(Worker, "xicclu", lambda self, *a, **k: [[0, 0, 0]])
+    # Availability prompts and calibration-preview commands are external to
+    # these widget tests. Individual availability/command tests override them.
+    monkeypatch.setattr(mw, "check_argyll_bin", lambda *a, **k: True)
+    monkeypatch.setattr(mw, "check_set_argyll_bin", lambda *a, **k: True)
+    monkeypatch.setattr(Worker, "exec_cmd", lambda self, *a, **k: True)
     # update_measurement_mode_ctrl() -> compute_measurement_modes() falls
     # through to the real Worker.get_instrument_measurement_modes() (a real
     # `spotread`/`ccxxmake` subprocess call) whenever get_instrument_name()
@@ -329,7 +342,15 @@ def window(qapp, stub_worker):
     for thread in win.findChildren(QThread):
         if thread.isRunning():
             thread.wait(5000)
+    editor = win._visual_whitepoint_editor_window
+    if editor is not None:
+        editor.close()
+        editor.deleteLater()
     win.close()
+    # close() hides a QWidget. Delete it and its timers on the GUI thread,
+    # rather than letting a later worker-thread garbage collection do so.
+    win.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 def test_tabs_present(window):
@@ -1325,7 +1346,15 @@ def test_visual_whitepoint_editor_prisma_disable_processing_error_shows_critical
     assert window._visual_whitepoint_editor_window is None
 
 
-def test_visual_whitepoint_editor_measure_consumer_sets_colortemp_whitepoint(window):
+@pytest.mark.parametrize("locus, label", [("t", "Daylight"), ("T", "Planckian")])
+def test_visual_whitepoint_editor_measure_consumer_sets_colortemp_whitepoint(
+    window, monkeypatch, locus, label
+):
+    monkeypatch.setattr(
+        mw.message_box,
+        "critical",
+        lambda *a, **k: pytest.fail("Unexpected measurement error"),
+    )
     window._visual_whitepoint_editor_btn_handler()
     editor = window._visual_whitepoint_editor_window
     editor.measure_btn.setEnabled(False)
@@ -1335,7 +1364,9 @@ def test_visual_whitepoint_editor_measure_consumer_sets_colortemp_whitepoint(win
     # config leaked from an earlier test elsewhere in the suite can leave a
     # new MainWindow's whitepoint_ctrl pre-set to index 2.
     window.whitepoint_ctrl.setCurrentIndex(0)
-    window.worker.output = ["Daylight temperature = 6504K"]
+    window.whitepoint_colortemp_locus_ctrl.setCurrentIndex(int(locus == "T"))
+    assert getcfg("whitepoint.colortemp.locus") == locus
+    window.worker.output = [f"{label} temperature = 6504K"]
     window._visual_whitepoint_editor_measure_consumer("ok")
     assert editor.measure_btn.isEnabled() is True
     assert window.whitepoint_ctrl.currentIndex() == 1
@@ -7957,6 +7988,7 @@ def test_enable_spyder2_action_triggers_wizard_without_recheck(window, monkeypat
     monkeypatch.setattr(
         window, "_enable_spyder2", lambda recheck: calls.append(recheck)
     )
+    window.enable_spyder2_action.setEnabled(True)
     window.enable_spyder2_action.trigger()
     assert calls == [False]
 
@@ -8002,6 +8034,13 @@ class TestDonationDialog:
         dialog = mw._DonationDialog(window)
         dialog.reject()
         assert getcfg("show_donation_message") == 1
+
+    def test_reject_with_do_not_show_again_clears_flag(self, window):
+        setcfg("show_donation_message", 1)
+        dialog = mw._DonationDialog(window)
+        dialog._do_not_show_again_cb.setChecked(True)
+        dialog.reject()
+        assert getcfg("show_donation_message") == 0
 
 
 def test_use_qt_ui_toggled_persists_config(window, monkeypatch):
@@ -9008,13 +9047,6 @@ def test_set_language_action_handler_skips_restart_when_declined(
         assert restarted == []
     finally:
         setcfg("lang", original)
-
-    def test_reject_with_do_not_show_again_clears_flag(self, window):
-        setcfg("show_donation_message", 1)
-        dialog = mw._DonationDialog(window)
-        dialog._do_not_show_again_cb.setChecked(True)
-        dialog.reject()
-        assert getcfg("show_donation_message") == 0
 
 
 # --- runtime theme changes ---------------------------------------------------

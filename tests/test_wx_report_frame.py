@@ -1,48 +1,43 @@
 from DisplayCAL.dev.mocks import check_call_str
 
 
-def test_update_estimated_measurement_time_1(setup_argyll):
+def test_update_estimated_measurement_time_1(setup_argyll, wx_app):
     """Testing for issue #37.
 
     ReportFrame.update_estimated_measurement_time() method raising
     TypeError.
     """
-    import wx
-
     from DisplayCAL.config import initcfg
     from DisplayCAL.wx_report_frame import ReportFrame
 
     initcfg()
-    app = wx.GetApp() or wx.App()
-
     with check_call_str(
         "DisplayCAL.worker.Worker.get_instrument_name",
         "i1 DisplayPro, ColorMunki Display",
         call_count=2,
     ):
         report_frame = ReportFrame()
-        # this shouldn't raise any TypeErrors as reported in #37
-        report_frame.update_estimated_measurement_time("chart")
+        try:
+            # this shouldn't raise any TypeErrors as reported in #37
+            report_frame.update_estimated_measurement_time("chart")
+        finally:
+            report_frame.Destroy()
 
 
-def test_devlink_profile_missing_hint(setup_argyll, data_path):
+def test_devlink_profile_missing_hint(setup_argyll, data_path, wx_app):
     """The "no 3D LUT is verified" hint follows the device link (issue 992)."""
-    import wx
-
-    from DisplayCAL.config import get_data_path, initcfg, setcfg
+    from DisplayCAL.config import initcfg, setcfg
     from DisplayCAL.icc_profile import ICCProfile
     from DisplayCAL.wx_report_frame import ReportFrame
 
     initcfg()
-    app = wx.GetApp() or wx.App()  # noqa: F841
-
     with check_call_str(
         "DisplayCAL.worker.Worker.get_instrument_name",
         "i1 DisplayPro, ColorMunki Display",
     ):
         report_frame = ReportFrame()
     try:
-        report_frame.simulation_profile = ICCProfile(get_data_path("ref/Rec709.icm"))
+        report_frame.simulation_profile = ICCProfile.from_named_rgb_space("Rec. 709")
         # set_profile("simulation") would have looked this up via xicclu
         report_frame.XYZbpin = [0, 0, 0]
         setcfg("measurement_report.chart.fields", "RGB")

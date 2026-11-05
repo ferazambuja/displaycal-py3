@@ -25,18 +25,17 @@ def test_fancytext_render_to_renderer():
     "progress_type,expected_count",
     [(0, 137), (1, 15), (2, 63)],
 )
-def test_progress_dialog_get_bitmaps_frame_counts(progress_type, expected_count):
+def test_progress_dialog_get_bitmaps_frame_counts(
+    progress_type, expected_count, wx_app
+):
     """ProgressDialog.get_bitmaps() must not silently return [] on a frame-count mismatch.
 
     Regression test for the processing (progress_type 0) animation having
     silently shown nothing since #45 added a 10th shutter_anim frame in 2022,
     breaking get_bitmaps' hardcoded "needs exactly 17 images" sanity check.
     """
-    import wx
-
     from DisplayCAL.wx_windows import ProgressDialog
 
-    app = wx.GetApp() or wx.App()  # noqa: F841 -- must stay referenced, see wx docs.
     # get_bitmaps caches per progress_type at the class level; clear it so
     # this test doesn't depend on execution order.
     ProgressDialog.bitmaps.pop(progress_type, None)

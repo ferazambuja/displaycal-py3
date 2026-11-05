@@ -1,7 +1,7 @@
 """Tests for DisplayCAL.ui.file_dialog."""
 
 import ntpath
-import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,8 +12,8 @@ from DisplayCAL.ui import file_dialog  # noqa: E402
 
 @pytest.fixture
 def windows_paths(monkeypatch):
-    """Make os.path behave like on Windows, where Qt returns forward slashes."""
-    monkeypatch.setattr(os, "path", ntpath)
+    """Simulate Windows paths without changing pytest's own path handling."""
+    monkeypatch.setattr(file_dialog, "os", SimpleNamespace(path=ntpath))
 
 
 def test_get_open_file_name_returns_native_separators(windows_paths, monkeypatch):

@@ -318,10 +318,8 @@ def test_get_pattern_geometry_position(monkeypatch, native_wayland):
 
 
 # @pytest.mark.skip(reason="Test segfaults with python 3.12 - further investigation required.")
-def test_generate_b2a_from_inverse_table(data_files, setup_argyll):
+def test_generate_b2a_from_inverse_table(data_files, setup_argyll, wx_app):
     """Test Worker.generate_B2A_from_inverse_table() method"""
-    import wx
-
     from DisplayCAL.argyll import ARGYLL_UTILS
     from DisplayCAL.config import setcfg, writecfg
 
@@ -334,8 +332,6 @@ def test_generate_b2a_from_inverse_table(data_files, setup_argyll):
     ARGYLL_UTILS.clear()
     writecfg()  # pool workers (SpawnPoolWorker-*) read config from disk
 
-    # for some reason we sometimes need to have a wx.App() running
-    _ = wx.GetApp() or wx.App()
     worker = Worker()
     icc_profile1 = ICCProfile(
         profile=data_files[
@@ -409,7 +405,9 @@ def test_blend_profile_blackpoint_calls_apply_black_offset_with_logfile(
     assert received["logfile"] is not None
 
 
-def test_generate_b2a_whitepoint_check_tolerance(data_files, monkeypatch) -> None:
+def test_generate_b2a_whitepoint_check_tolerance(
+    data_files, monkeypatch, wx_app
+) -> None:
     """The whitepoint sanity check accepts near-D50 and rejects grossly wrong.
 
     Regression: the check required the normalised white to round to exactly
@@ -418,9 +416,6 @@ def test_generate_b2a_whitepoint_check_tolerance(data_files, monkeypatch) -> Non
     wrongly rejected with "Invalid white XYZ". It now uses a 0.01 tolerance,
     which still catches a grossly wrong white from a failed inverse lookup.
     """
-    import wx
-
-    _ = wx.GetApp() or wx.App()
     worker = Worker()
     profile = ICCProfile(
         profile=data_files[
@@ -697,15 +692,12 @@ def test_abort_subprocess_confirm_true_proceeds_past_guard(monkeypatch):
     reason="Worker.authenticate() returns None on Windows without touching "
     "Sudo at all (sudo/password-prompt auth is POSIX-only).",
 )
-def test_worker_authenticate_threads_password_prompt(monkeypatch):
+def test_worker_authenticate_threads_password_prompt(monkeypatch, wx_app):
     """Worker.authenticate() passes Worker.password_prompt to Sudo.authenticate()."""
-    import wx
-
     # authenticate() unconditionally constructs a BetterWindowDisabler(),
     # which calls wx.GetTopLevelWindows(); under GTK/Linux with no wx.App
     # running this crashes the process natively (no Python traceback), not
     # just a normal assertion, taking the whole pytest-xdist worker down.
-    _ = wx.GetApp() or wx.App()
     worker = Worker()
     prompt_seam = object()
     worker.password_prompt = prompt_seam
@@ -1251,12 +1243,9 @@ def test_prepare_dispcal_1():
     os.getenv("GITHUB_ACTIONS") == "true",
     reason="Not working properly on GitHub.",
 )
-def test_get_argyll_version_string_returns_a_proper_value():
+def test_get_argyll_version_string_returns_a_proper_value(wx_app):
     """get_argyll_version_string() returns a proper value."""
-    import wx
-
     config.initcfg()
-    app = wx.GetApp() or wx.App()
 
     assert get_argyll_version_string(name="ccxxmake", silent=False) != "0.0.0"
 
