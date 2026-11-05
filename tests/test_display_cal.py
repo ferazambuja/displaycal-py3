@@ -54,21 +54,36 @@ def fixture_app(wx_app) -> AppConsole:
 
 @pytest.fixture(scope="module", name="mainframe")
 def fixture_mainframe() -> Iterator[MainFrame]:
-    """Return mainframe for tests.
+    """Share one MainFrame, then release this module's native windows.
 
     Module-scoped (not class-scoped) because MainFrame() also creates hidden
-    child top-level windows (infoframe, measureframe, ...) that wx never
-    fully releases without a running MainLoop(); building a fresh MainFrame()
-    per test function leaked dozens of native windows over the file and
-    caused multi-minute stalls on macOS CI runners (#778).
+    child top-level windows (infoframe, measureframe, ...). Building a fresh
+    MainFrame per function previously leaked dozens of windows and caused
+    multi-minute stalls on macOS CI runners (#778). Drain deferred deletion
+    at module teardown instead of leaving it to interpreter finalization.
     """
     # Widget tests must not probe a real display (AppleScript on macOS can
     # block awaiting Automation consent). Keep the boundary stubbed for later
     # update_controls() calls too, without changing other modules' fixtures.
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(config, "get_display_profile", lambda *args, **kwargs: None)
-        worker = Worker()
-        yield display_cal.MainFrame(worker=worker)
+        existing_windows = set(wx.GetTopLevelWindows())
+        try:
+            worker = Worker()
+            yield display_cal.MainFrame(worker=worker)
+        finally:
+            # Native windows can still call Python during their destruction.
+            # Dispose this module's windows while wx and Python are alive,
+            # preserving windows owned by earlier fixtures.
+            for window in list(wx.GetTopLevelWindows()):
+                if (
+                    window not in existing_windows
+                    and window
+                    and not window.IsBeingDeleted()
+                ):
+                    window.Destroy()
+            wx.YieldIfNeeded()
+            assert set(wx.GetTopLevelWindows()) <= existing_windows
 
 
 def test_update_colorimeter_correction_matrix_ctrl_items_1(
@@ -375,8 +390,8 @@ def test_restore_measurement_mode_clears_crash_state(mainframe: MainFrame) -> No
 
 
 def test_get_profile_load_on_login_label() -> None:
-    """Test if load on login label is returned."""
-    assert get_profile_load_on_login_label(True) == "profile.load_on_login"
+    """Use the active translation whether or not another test initialized it."""
+    assert get_profile_load_on_login_label(True) == lang.getstr("profile.load_on_login")
 
 
 def test_install_scope_handler(mainframe: MainFrame) -> None:
