@@ -1,4 +1,7 @@
 # Standard Library Imports
+import atexit
+import gc
+import weakref
 from queue import Empty
 from unittest.mock import patch
 
@@ -87,6 +90,39 @@ def wcs_manager():
 
 def test_manager_initialization(wcs_manager):
     assert wcs_manager._worker_process.is_alive()
+
+
+def test_shutdown_releases_log_listener(wcs_manager):
+    """A stopped manager must not retain its logging thread and queue."""
+    listener_thread = wcs_manager._log_listener._thread
+    try:
+        wcs_manager.shutdown()
+        assert not listener_thread.is_alive()
+        assert wcs_manager._log_queue._closed
+        assert not wcs_manager._log_queue._thread.is_alive()
+    finally:
+        # Leave no diagnostic thread behind when checking the unfixed code.
+        if listener_thread.is_alive():
+            wcs_manager._log_listener.stop()
+
+
+def test_shutdown_does_not_retain_manager_until_process_exit(monkeypatch):
+    """An explicitly stopped manager can release its process and queue handles."""
+    monkeypatch.setattr(mscms_module, "_wcs_worker_process", _mock_wcs_worker_process)
+    manager = mscms_module.WCSManager()
+    reference = weakref.ref(manager)
+    manager.shutdown()
+    del manager
+    gc.collect()
+    try:
+        assert reference() is None
+    finally:
+        # Clean up the old atexit registration and listener on a failing run.
+        retained = reference()
+        if retained is not None:
+            atexit.unregister(retained._atexit_shutdown)
+            if retained._log_listener._thread is not None:
+                retained._log_listener.stop()
 
 
 def test_successful_method_call(wcs_manager):

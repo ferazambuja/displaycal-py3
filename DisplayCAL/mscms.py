@@ -553,6 +553,12 @@ class WCSManager:
 
         if self._response_listener_thread and self._response_listener_thread.is_alive():
             self._response_listener_thread.join(timeout=2.0)
+        if self._log_listener is not None:
+            self._log_listener.stop()
+        self._log_queue.close()
+        self._log_queue.join_thread()
+        # Explicit shutdown must release this manager before interpreter exit.
+        atexit.unregister(self._atexit_shutdown)
         logger.info("WCSManager shut down complete")
 
     def _atexit_shutdown(self) -> None:
