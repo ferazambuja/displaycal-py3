@@ -286,27 +286,46 @@ class TestConnectMadvr:
         assert result is True
         assert shown == [True]
 
-    @pytest.mark.parametrize("dialog_delay", [0.0, 5.2])
     def test_slow_cancel_returns_none(
-        self, qapp, worker, monkeypatch, pending_connection, dialog_delay
+        self, qapp, worker, monkeypatch, pending_connection
     ):
-        dialog_class = pgs.QProgressDialog
-
-        def create_dialog(*args, **kwargs):
-            time.sleep(dialog_delay)
-            return dialog_class(*args, **kwargs)
-
         def _fake_exec(self):
             self.canceled.emit()
             pending_connection.set()
             return 0
 
-        monkeypatch.setattr(dialog_class, "exec_", _fake_exec)
-        monkeypatch.setattr(pgs, "QProgressDialog", create_dialog)
+        monkeypatch.setattr(pgs.QProgressDialog, "exec_", _fake_exec)
 
         result = pgs.connect_madvr(worker, None, "title")
 
         assert result is None
+
+    def test_completion_during_dialog_creation_skips_wait_loop(
+        self, qapp, worker, monkeypatch, pending_connection
+    ):
+        thread_class = pgs._CallThread
+        dialog_class = pgs.QProgressDialog
+        threads = []
+
+        def create_thread(*args, **kwargs):
+            thread = thread_class(*args, **kwargs)
+            threads.append(thread)
+            return thread
+
+        def create_dialog(*args, **kwargs):
+            pending_connection.set()
+            assert threads[0].wait(5000)
+            return dialog_class(*args, **kwargs)
+
+        monkeypatch.setattr(pgs, "_CallThread", create_thread)
+        monkeypatch.setattr(pgs, "QProgressDialog", create_dialog)
+        monkeypatch.setattr(
+            dialog_class,
+            "exec_",
+            lambda self: pytest.fail("connection already finished"),
+        )
+
+        assert pgs.connect_madvr(worker, None, "title") is True
 
 
 class TestConnectPatterngenerator:

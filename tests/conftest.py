@@ -112,6 +112,7 @@ if (
     and sys.platform == "darwin"
     and sys.version_info[:2] == (3, 13)
 ):
+
     def _exit_before_native_shutdown_crash():
         """Sidestep a native, traceback-less segfault during CPython 3.13's
         own interpreter finalization, reproduced twice in a row on macOS CI

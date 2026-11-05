@@ -4,6 +4,7 @@ import os
 import platform
 import sys
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 from zlib import crc32
@@ -52,7 +53,7 @@ def fixture_app(wx_app) -> AppConsole:
 
 
 @pytest.fixture(scope="module", name="mainframe")
-def fixture_mainframe() -> MainFrame:
+def fixture_mainframe() -> Iterator[MainFrame]:
     """Return mainframe for tests.
 
     Module-scoped (not class-scoped) because MainFrame() also creates hidden
@@ -61,8 +62,13 @@ def fixture_mainframe() -> MainFrame:
     per test function leaked dozens of native windows over the file and
     caused multi-minute stalls on macOS CI runners (#778).
     """
-    worker = Worker()
-    return display_cal.MainFrame(worker=worker)
+    # Widget tests must not probe a real display (AppleScript on macOS can
+    # block awaiting Automation consent). Keep the boundary stubbed for later
+    # update_controls() calls too, without changing other modules' fixtures.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(config, "get_display_profile", lambda *args, **kwargs: None)
+        worker = Worker()
+        yield display_cal.MainFrame(worker=worker)
 
 
 def test_update_colorimeter_correction_matrix_ctrl_items_1(
