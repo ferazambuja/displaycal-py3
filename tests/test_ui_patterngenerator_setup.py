@@ -15,6 +15,7 @@ fakes. See ``DisplayCAL/ui/MAINFRAME_PORT_PLAN.md``.
 import os
 import socket
 import sys
+import threading
 import time
 
 import pytest
@@ -25,6 +26,7 @@ os.environ.setdefault("QT_API", "pyside6")
 
 pytest.importorskip("qtpy")
 
+from qtpy.QtCore import QCoreApplication, QEvent  # noqa: E402
 from qtpy.QtWidgets import QMessageBox  # noqa: E402
 
 from DisplayCAL import config  # noqa: E402
@@ -64,6 +66,40 @@ def _spin_until(qapp, predicate, timeout_s=30.0):
         qapp.processEvents()
         time.sleep(0.005)
     return predicate()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_call_thread_notifies_after_native_thread_finishes(qapp, fails):
+    """A done receiver can safely release the thread's final reference."""
+    unwinding = threading.Event()
+    release = threading.Event()
+    error = ValueError("connection failed")
+
+    def call():
+        if fails:
+            raise error
+        return 42
+
+    class FinishingThread(pgs._CallThread):
+        def run(self):
+            super().run()
+            unwinding.set()
+            release.wait(5)
+
+    thread = FinishingThread(call)
+    results = []
+    thread.done.connect(lambda value: results.append((value, thread.isFinished())))
+    try:
+        thread.start()
+        assert unwinding.wait(5)
+        QCoreApplication.sendPostedEvents(None, QEvent.MetaCall)
+        assert results == []
+        release.set()
+        assert _spin_until(qapp, lambda: results)
+        assert results == [(error if fails else 42, True)]
+    finally:
+        release.set()
+        assert thread.wait(5000)
 
 
 class _FakePatternGenerator:
@@ -202,6 +238,19 @@ class TestPrismaHostDialog:
 
 
 class TestConnectMadvr:
+    @pytest.fixture
+    def pending_connection(self, worker, monkeypatch):
+        """Keep the connection pending until the test enters the wait dialog."""
+        release = threading.Event()
+
+        def connect():
+            release.wait(5)
+            return True
+
+        monkeypatch.setattr(worker, "madtpg_connect", connect)
+        yield release
+        release.set()
+
     def test_fast_success(self, qapp, worker, monkeypatch):
         monkeypatch.setattr(worker, "madtpg_connect", lambda: True)
 
@@ -219,26 +268,30 @@ class TestConnectMadvr:
         assert result is False
         assert shown == [lang.getstr("madtpg.launch.failure")]
 
-    def test_slow_success_shows_and_closes_wait_dialog(self, qapp, worker, monkeypatch):
-        def _slow_connect():
-            time.sleep(0.3)
-            return True
+    def test_slow_success_shows_and_closes_wait_dialog(
+        self, qapp, worker, monkeypatch, pending_connection
+    ):
+        original_exec = pgs.QProgressDialog.exec_
+        shown = []
 
-        monkeypatch.setattr(worker, "madtpg_connect", _slow_connect)
+        def exec_dialog(dialog):
+            shown.append(True)
+            pending_connection.set()
+            return original_exec(dialog)
+
+        monkeypatch.setattr(pgs.QProgressDialog, "exec_", exec_dialog)
 
         result = pgs.connect_madvr(worker, None, "title")
 
         assert result is True
+        assert shown == [True]
 
-    def test_slow_cancel_returns_none(self, qapp, worker, monkeypatch):
-        def _slow_connect():
-            time.sleep(0.3)
-            return True
-
-        monkeypatch.setattr(worker, "madtpg_connect", _slow_connect)
-
+    def test_slow_cancel_returns_none(
+        self, qapp, worker, monkeypatch, pending_connection
+    ):
         def _fake_exec(self):
             self.canceled.emit()
+            pending_connection.set()
             return 0
 
         monkeypatch.setattr(pgs.QProgressDialog, "exec_", _fake_exec)

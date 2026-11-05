@@ -44,7 +44,7 @@ import sys
 from time import localtime, strftime
 from typing import Callable
 
-from qtpy.QtCore import QObject, Qt, QThread, QTimer, Signal
+from qtpy.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from qtpy.QtWidgets import (
     QComboBox,
     QDialog,
@@ -82,6 +82,7 @@ class _CallThread(QThread):
         #: -- as :func:`connect_madvr` does -- can read the outcome without
         #: needing a delivered (necessarily queued, cross-thread) signal.
         self.result: object = None
+        self.finished.connect(self._deliver_result)
 
     def run(self) -> None:
         try:
@@ -89,7 +90,13 @@ class _CallThread(QThread):
         except Exception as exception:  # noqa: BLE001  (reported on GUI thread)
             result = exception
         self.result = result
-        self.done.emit(result)
+
+    @Slot()
+    def _deliver_result(self) -> None:
+        # Receivers may release the last reference to this QThread. Deliver
+        # on its owning GUI thread only after native thread cleanup is done.
+        self.wait()
+        self.done.emit(self.result)
 
 
 def prisma_upload_filename(lut3d_path: str) -> str:
